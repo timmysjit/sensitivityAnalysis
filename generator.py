@@ -1,7 +1,6 @@
 import os
 import random
 import tempfile
-from multiprocessing import Pool, cpu_count
 from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -53,7 +52,6 @@ def _normalize_attachments(step3_sensor_attachments: List[Dict]) -> List[Dict]:
     return normalized
 
 
-#inp
 def _load_wn_from_inp(network_inp_content: str):
     temp_path = None
     try:
@@ -68,8 +66,6 @@ def _load_wn_from_inp(network_inp_content: str):
             os.unlink(temp_path)
 
 
-
-#hexagon
 def _prepare_hexagons(hexagon_geojson: Dict):
     if not isinstance(hexagon_geojson, dict):
         raise LeakageGenerationError("hexagonGeoJson must be an object")
@@ -336,6 +332,7 @@ def generate_leakage_dataset(
     if no_leak_portion_value < 0 or no_leak_portion_value > 1:
         raise LeakageGenerationError("noLeakPortion must be between 0 and 1")
 
+    print("Data generation started")
     demand_values_lps = _parse_demand_range(leak_demand_range)
     normalized_attachments = _normalize_attachments(step3_sensor_attachments)
     polygons = _prepare_hexagons(hexagon_geojson)
@@ -355,9 +352,9 @@ def generate_leakage_dataset(
         positions_count = len(_pipe_positions(float(tp.length), step_distance))
         if positions_count > 0 and pipe_paths_source_crs.get(str(pipe_name)):
             total_runs += len(demand_values_lps) * positions_count
-    print(total_runs)
-    
-    pipe_count = len(wn_template.pipe_name_list)
+
+    print("total runs: ", total_runs)
+
     for pipe_name in wn_template.pipe_name_list:
         template_pipe = wn_template.get_link(pipe_name)
         positions = _pipe_positions(float(template_pipe.length), step_distance)
@@ -378,6 +375,8 @@ def generate_leakage_dataset(
             leak_demand_m3s = leak_demand_lps / 1000.0
             for position in positions:
                 run_idx += 1
+                if (run_idx%50 == 0):
+                    print(f"progress: {run_idx}/{total_runs}")
                 if cancel_check is not None and cancel_check():
                     raise LeakageGenerationError("Task cancelled by user")
                 if progress_callback is not None:
@@ -385,8 +384,6 @@ def generate_leakage_dataset(
                     pct = (run_idx / total_runs * 95) if total_runs > 0 else 0
                     progress_callback(pct, run_idx, total_runs, f"Simulation {run_idx}/{total_runs}")
                 try:
-                    if (run_idx%10 == 0):
-                        print(f"Progress: {run_idx}/{total_runs}")
                     wn = _load_wn_from_inp(network_inp_content)
                     wn, leak_junction_name = _split_pipe_with_leak(wn, pipe_name, position, run_idx)
 
@@ -419,7 +416,6 @@ def generate_leakage_dataset(
                         }
                     )
                 except Exception as exc:
-                    
                     failures.append(
                         {
                             "runId": run_idx,
@@ -472,205 +468,7 @@ def generate_leakage_dataset(
                 }
             )
 
-    return {
-        "summary": {
-            "totalRuns": run_idx,
-            "successfulRuns": len(dataset),
-            "failedRuns": len(failures),
-            "stepDistance": step_distance,
-            "leakDemandValuesLps": demand_values_lps,
-        },
-        "dataset": dataset,
-        "failures": failures,
-    }
-
-
-def _run_single_simulation(args):
-    (
-        run_idx,
-        pipe_name,
-        pipe_length,
-        position,
-        leak_demand_lps,
-        path_points,
-        network_inp_content,
-        normalized_attachments,
-        noise_amplitude,
-        crs,
-        polygons,
-    ) = args
-
-    leak_demand_m3s = leak_demand_lps / 1000.0
-    try:
-        wn = _load_wn_from_inp(network_inp_content)
-        wn, leak_junction_name = _split_pipe_with_leak(wn, pipe_name, position, run_idx)
-
-        leak_junction = wn.get_node(leak_junction_name)
-        leak_junction.add_demand(leak_demand_m3s, pattern_name=None)
-
-        sim = wntr.sim.EpanetSimulator(wn)
-        results = sim.run_sim(convergence_error=False)
-
-        fraction = position / pipe_length
-        leak_x, leak_y = _point_along_polyline(path_points, fraction)
-        to_wgs84 = Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
-        leak_lon, leak_lat = to_wgs84.transform(leak_x, leak_y)
-        hexagon_id = _find_hexagon_index(leak_lon, leak_lat, polygons)
-
-        time_s, sensors = _extract_sensor_pressures(results, normalized_attachments, noise_amplitude)
-
-        return (
-            "ok",
-            {
-                "runId": run_idx,
-                "pipeId": pipe_name,
-                "leakDemandLps": leak_demand_lps,
-                "leakPositionOnPipe": position,
-                "leakLocationWgs84": {
-                    "longitude": leak_lon,
-                    "latitude": leak_lat,
-                },
-                "hexagonId": hexagon_id,
-                "time": time_s,
-                "sensors": sensors,
-            },
-        )
-    except Exception as exc:
-        return (
-            "fail",
-            {
-                "runId": run_idx,
-                "pipeId": pipe_name,
-                "leakDemandLps": leak_demand_lps,
-                "leakPositionOnPipe": position,
-                "error": str(exc),
-            },
-        )
-
-
-def generate_leakage_dataset_parallel(
-    *,
-    hexagon_geojson: Dict,
-    network_inp_content: str,
-    crs: str,
-    delta_x_leak: float,
-    hexagon_radius: float,
-    step3_sensor_attachments: List[Dict],
-    leak_demand_range: List[float],
-    no_leak_portion: float = 0.0,
-    noise_amplitude: float = 0.05,
-    num_workers: Optional[int] = None,
-) -> Dict:
-    if not network_inp_content:
-        raise LeakageGenerationError("networkInpContent is empty")
-
-    step_distance = float(delta_x_leak)
-    if step_distance <= 0:
-        raise LeakageGenerationError("deltaXLeak must be greater than 0")
-
-    try:
-        no_leak_portion_value = float(no_leak_portion)
-    except (TypeError, ValueError):
-        raise LeakageGenerationError("noLeakPortion must be numeric")
-
-    if no_leak_portion_value < 0 or no_leak_portion_value > 1:
-        raise LeakageGenerationError("noLeakPortion must be between 0 and 1")
-
-    demand_values_lps = _parse_demand_range(leak_demand_range)
-    normalized_attachments = _normalize_attachments(step3_sensor_attachments)
-    polygons = _prepare_hexagons(hexagon_geojson)
-
-    wn_template = _load_wn_from_inp(network_inp_content)
-    pipe_paths_source_crs = _build_pipe_paths_source_crs(wn_template)
-
-    tasks = []
-    failures = []
-    run_idx = 0
-
-    for pipe_name in wn_template.pipe_name_list:
-        template_pipe = wn_template.get_link(pipe_name)
-        positions = _pipe_positions(float(template_pipe.length), step_distance)
-        if not positions:
-            continue
-
-        path_points = pipe_paths_source_crs.get(str(pipe_name))
-        if not path_points:
-            failures.append(
-                {"pipeId": pipe_name, "error": "Missing source geometry for pipe path"}
-            )
-            continue
-
-        for leak_demand_lps in demand_values_lps:
-            for position in positions:
-                run_idx += 1
-                tasks.append((
-                    run_idx,
-                    str(pipe_name),
-                    float(template_pipe.length),
-                    position,
-                    leak_demand_lps,
-                    path_points,
-                    network_inp_content,
-                    normalized_attachments,
-                    noise_amplitude,
-                    crs,
-                    polygons,
-                ))
-
-    total_runs = len(tasks)
-    print(f"Total simulations: {total_runs}, using {num_workers or cpu_count()} workers")
-
-    if num_workers is None:
-        num_workers = cpu_count()
-
-    dataset = []
-    completed = 0
-    with Pool(processes=num_workers) as pool:
-        for result in pool.imap_unordered(_run_single_simulation, tasks, chunksize=4):
-            completed += 1
-            if completed % 50 == 0:
-                print(f"Progress: {completed}/{total_runs}")
-            status, data = result
-            if status == "ok":
-                dataset.append(data)
-            else:
-                failures.append(data)
-
-    no_leak_target_count = int(round(len(dataset) * no_leak_portion_value))
-    if no_leak_target_count > 0 and dataset:
-        print("Generating no-leak samples...")
-        wn_no_leak = _load_wn_from_inp(network_inp_content)
-        sim_no_leak = wntr.sim.EpanetSimulator(wn_no_leak)
-        results_no_leak = sim_no_leak.run_sim(convergence_error=False)
-
-        pressures_df = results_no_leak.node["pressure"]
-        base_times = [float(t) for t in list(pressures_df.index)]
-        base_pressures: Dict[str, List[float]] = {}
-        for col in pressures_df.columns:
-            base_pressures[str(col)] = [float(v) for v in pressures_df[col].tolist()]
-
-        sampled_indices = np.random.choice(
-            len(dataset), size=no_leak_target_count, replace=False
-        )
-
-        for sampled_idx in sampled_indices.tolist():
-            run_idx += 1
-            time_s, sensors = _apply_noise_to_base_pressures(
-                base_pressures, base_times, normalized_attachments, noise_amplitude
-            )
-            dataset.append(
-                {
-                    "runId": run_idx,
-                    "pipeId": -1,
-                    "leakDemandLps": 0.0,
-                    "leakPositionOnPipe": 0.0,
-                    "leakLocationWgs84": None,
-                    "hexagonId": -1,
-                    "time": time_s,
-                    "sensors": sensors,
-                }
-            )
-
+    print("Data generation finished")
     return {
         "summary": {
             "totalRuns": run_idx,
