@@ -525,6 +525,7 @@ def generate_random_test_data(
 
     # Build candidate list: pipes with valid geometry and positions
     candidates: List[Dict] = []
+    sample = 0
     for pipe_name in wn_template.pipe_name_list:
         template_pipe = wn_template.get_link(pipe_name)
         positions = _pipe_positions(float(template_pipe.length), step_distance)
@@ -534,6 +535,9 @@ def generate_random_test_data(
         if not path_points:
             continue
         for position in positions:
+            sample+=1
+            if (sample%50 == 0):
+                print(f"progress: {sample}/{num_samples}")
             candidates.append({
                 "pipeName": str(pipe_name),
                 "position": position,

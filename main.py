@@ -28,10 +28,13 @@ def main():
     ) 
 
     epoch_count = 1
-    train_output = train_leakage_model(dataset_payload=train_data, network_inp_content=network_inp_content, epoch_count=epoch_count)
 
+    print("training started")
+    train_output = train_leakage_model(dataset_payload=train_data, network_inp_content=network_inp_content, epoch_count=epoch_count)
+    print("training finished")
     gcn_model_id = train_output["modelId"]
 
+    print("transfer learning dataset generation started")
     tl_data = generate_random_test_data(
     hexagon_geojson = hexagon_geojson,
     network_inp_content = network_inp_content,
@@ -45,10 +48,16 @@ def main():
     noise_amplitude = TL["noise_amplitude"],
     no_leak_portion = NO_LEAK_PORTION,
     )
+    print("transfer learning dataset generation finished")
 
+    print("transfer learning training started")
     tl_output = transfer_learning(model_id=gcn_model_id, dataset_payload=tl_data, network_inp_content=network_inp_content, epoch_count=epoch_count)
+    print("transfer learning training finished")
+
+    
     tl_model_id = tl_output["modelId"]
 
+    print("test dataset generation started")
     test_dataset = generate_random_test_data(
         hexagon_geojson=hexagon_geojson,
         network_inp_content=network_inp_content,
@@ -62,9 +71,11 @@ def main():
         noise_amplitude=TEST["noise_amplitude"],
         no_leak_portion=NO_LEAK_PORTION,
     )
-
+    print("test dataset generation finished")
+    
+    print("prediction on test data started")
     prediction = predict_leakage(model_id=tl_model_id, test_dataset=test_dataset["dataset"], network_inp_content=network_inp_content)
-
+    print("prediction on test data finished")
     end_time = time.perf_counter()
 
     print("Time taken: ", end_time - start_time)
