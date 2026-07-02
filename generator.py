@@ -7,6 +7,7 @@ import numpy as np
 import wntr
 from pyproj import Transformer
 from shapely.geometry import Point, shape
+import logging
 
 
 class LeakageGenerationError(Exception):
@@ -333,6 +334,7 @@ def generate_leakage_dataset(
         raise LeakageGenerationError("noLeakPortion must be between 0 and 1")
 
     print("Data generation started")
+    
     demand_values_lps = _parse_demand_range(leak_demand_range)
     normalized_attachments = _normalize_attachments(step3_sensor_attachments)
     polygons = _prepare_hexagons(hexagon_geojson)
@@ -354,6 +356,7 @@ def generate_leakage_dataset(
             total_runs += len(demand_values_lps) * positions_count
 
     print("total runs: ", total_runs)
+    logging.info(f"Total runs: {total_runs}")
 
     for pipe_name in wn_template.pipe_name_list:
         template_pipe = wn_template.get_link(pipe_name)
