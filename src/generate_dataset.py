@@ -1,12 +1,12 @@
 import json
-from config import *
+from config.config import *
 if CONFIG["PARALLEL"]:
-    from generator_parallel import *
+    from src.generator_parallel import *
 else: 
-    from generator import *
+    from src.generator import *
 from model_training import *
 import time
-from utils import *
+from src.utils import *
 import logging
 
 def main():

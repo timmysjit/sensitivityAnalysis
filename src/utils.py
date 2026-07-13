@@ -1,6 +1,6 @@
 import os
 import json
-from config import *
+from config.config import *
 import logging
 
 def save_init():

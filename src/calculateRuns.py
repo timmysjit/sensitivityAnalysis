@@ -1,7 +1,9 @@
 import os
 import tempfile
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 import wntr
+from config.config import *
+import json
 
 class LeakageGenerationError(Exception):
     pass
@@ -125,8 +127,6 @@ def calc(*,
     total = total_runs + no_leak_target_count
     print(f"leaks : {total_runs} , no leaks : {no_leak_target_count}, total : {total}")
 
-from config import *
-import json
 def main():
     file = open(CONFIG["GEOJSON"], "r")
     data = json.load(file)
