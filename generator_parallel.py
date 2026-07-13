@@ -1,4 +1,3 @@
-import multiprocessing as mp
 from multiprocessing import Pool
 import faulthandler
 import time
@@ -11,14 +10,13 @@ import tempfile
 import wntr
 from pyproj import Transformer
 from shapely.geometry import Point, shape
-import copy
-
-class LeakageGenerationError(Exception):
-    pass
-
+import shutil
 
 faulthandler.enable()
 
+
+class LeakageGenerationError(Exception):
+    pass
 
 def _parse_demand_range(leak_demand_range: List[float]) -> List[float]:
     if not isinstance(leak_demand_range, list) or len(leak_demand_range) != 3:
@@ -257,7 +255,6 @@ def _split_pipe_with_leak(wn, pipe_name: str, position: float, run_idx: int):
 
     return wn_after_split, leak_junction_name
 
-
 def _extract_sensor_pressures(results, attachments: List[Dict], noise_amplitude: float = 0.05):
     pressures_df = results.node["pressure"]
     if pressures_df.empty:
@@ -287,7 +284,6 @@ def _extract_sensor_pressures(results, attachments: List[Dict], noise_amplitude:
 
     return times, sensors
 
-
 def _apply_noise_to_base_pressures(base_pressures: Dict[str, List[float]], times: List[float], attachments: List[Dict], noise_amplitude: float = 0.05):
     # Build a lookup from nodeId -> sensorId for nodes that have a linked sensor
     sensor_id_lookup = {att["nodeId"]: att["sensorId"] for att in attachments}
@@ -311,10 +307,10 @@ def _apply_noise_to_base_pressures(base_pressures: Dict[str, List[float]], times
 
 _shared = {}
 
-def _init_worker(network_inp_content, polygons, normalized_attachments, noise_amplitude, crs, total_runs):
+def _init_worker(network_inp_content, hexagon_geojson, step3_sensor_attachments, noise_amplitude, crs, total_runs):
     _shared["inp"] = network_inp_content
-    _shared["polygons"] = polygons
-    _shared["normalized_attachments"] = normalized_attachments
+    _shared["polygons"] = _prepare_hexagons(hexagon_geojson)
+    _shared["normalized_attachments"] = _normalize_attachments(step3_sensor_attachments)
     _shared["noise_amplitude"] = noise_amplitude
     _shared["total_runs"] = total_runs
     _shared["to_wgs84"] = Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
@@ -326,9 +322,10 @@ def _run_single(input):
     total_runs = _shared["total_runs"]
     pipe_name = input["pipe_name"]
     position = input["position"]
-    print(f"[worker] start run={run_idx} pipe={pipe_name} position={position}", flush=True)
-    if (input["run_idx"]%100 == 0):
+
+    if input["run_idx"] % 100 == 0:
         print(f"progress:{run_idx}/{total_runs}")
+
     inp = _shared["inp"]
     to_wgs84 = _shared["to_wgs84"]
     polygons = _shared["polygons"]
@@ -344,17 +341,20 @@ def _run_single(input):
         start_time = time.perf_counter()
         wn = _load_wn_from_inp(inp)
 
-        tank_names = getattr(wn, "tank_name_list", [])
-        reservoir_names = getattr(wn, "reservoir_name_list", [])
-        if not tank_names and not reservoir_names:
-            raise LeakageGenerationError("Network has no tanks or reservoirs for EPANET simulation")
-
-        mt = time.perf_counter()
         wn, leak_junction_name = _split_pipe_with_leak(wn, pipe_name, input["position"], run_idx)
         leak_junction = wn.get_node(leak_junction_name)
         leak_junction.add_demand(leak_demand_m3s, pattern_name=None)
         sim = wntr.sim.EpanetSimulator(wn)
-        results = sim.run_sim(convergence_error=False)
+        
+        # Give each worker its own temp directory + unique file_prefix so parallel
+        # EPANET runs don't race on the shared "temp.inp"/"temp.bin"/"temp.rpt"
+        # files that wntr writes in the current working directory by default.
+        worker_tmpdir = tempfile.mkdtemp(prefix=f"epanet_run_{os.getpid()}_{run_idx}_")
+        try:
+            file_prefix = os.path.join(worker_tmpdir, "sim")
+            results = sim.run_sim(file_prefix=file_prefix, convergence_error=False)
+        finally:
+            shutil.rmtree(worker_tmpdir, ignore_errors=True)
 
         fraction = input["position"] / template_pipe_length
         leak_x, leak_y = _point_along_polyline(path_points, fraction)
@@ -363,7 +363,7 @@ def _run_single(input):
 
         time_s, sensors = _extract_sensor_pressures(results, normalized_attachments, noise_amplitude)
         end_time = time.perf_counter()
-        print(f"[worker] done run={run_idx} pipe={pipe_name} elapsed={end_time - start_time:.3f}s", flush=True)
+
         return {
             "status" : "success",
             "data" :{
@@ -379,9 +379,7 @@ def _run_single(input):
                 "time": time_s,
                 "sensors": sensors,
             },
-            "time" : end_time - start_time,
-
-            "dc_time" : mt - start_time
+            "time" : end_time - start_time
             }
     except Exception as exc:
         print(f"[worker] failed run={run_idx} pipe={pipe_name} error={exc}", flush=True)
@@ -430,16 +428,12 @@ def generate_leakage_dataset(
     start_time = time.perf_counter()
     demand_values_lps = _parse_demand_range(leak_demand_range)
     normalized_attachments = _normalize_attachments(step3_sensor_attachments)
-    polygons = _prepare_hexagons(hexagon_geojson)
-
     wn_template = _load_wn_from_inp(network_inp_content)
     pipe_paths_source_crs = _build_pipe_paths_source_crs(wn_template)
-    to_wgs84 = Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
 
     dataset = []
     failures = []
     time_taken = []
-    dc_time = []
     run_idx = 0
 
     # Pre-calculate total simulation runs for progress reporting
@@ -455,13 +449,12 @@ def generate_leakage_dataset(
     
     inputs = []
 
-    ctx = mp.get_context("spawn")
-    pool = ctx.Pool(
-        processes=min(8, (os.cpu_count() or 1)),
+    pool = Pool(
         initializer=_init_worker,
-        initargs=(network_inp_content, polygons, normalized_attachments, noise_amplitude, crs, total_runs),
+        initargs=(network_inp_content, hexagon_geojson, step3_sensor_attachments, noise_amplitude, crs, total_runs),
         maxtasksperchild=1,
     )
+    print(pool._processes)
     for pipe_name in wn_template.pipe_name_list:
         template_pipe = wn_template.get_link(pipe_name)
         positions = _pipe_positions(float(template_pipe.length), step_distance)
@@ -485,17 +478,12 @@ def generate_leakage_dataset(
 
     results_iterator = pool.imap(_run_single, inputs)
     
-    print("hi!")
-
     for result in results_iterator:
         if (result["status"] == "success"):
             dataset.append(result["data"])
             time_taken.append(result["time"])
-            dc_time.append(result["dc_time"])
         else:
             failures.append(result["data"])
-
-    print("bye!")
     
     pool.close()
     pool.join()
@@ -543,7 +531,7 @@ def generate_leakage_dataset(
 
     print("Data generation finished")
     end_time = time.perf_counter()
-
+    print(f"training data set generated successfully, time taken: {end_time - start_time}")
     logging.info(f"training data set generated successfully, time taken: {end_time - start_time}")
     return {
         "summary": {
@@ -557,7 +545,6 @@ def generate_leakage_dataset(
         "failures": failures,
 
         "time" : time_taken,
-        "dc_time" : dc_time,
         "leak_count" : total_runs
     }
 
