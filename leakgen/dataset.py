@@ -1,12 +1,12 @@
 import json
 from config.config import *
 if CONFIG["PARALLEL"]:
-    from src.generator_parallel import *
+    from leakgen.generator_parallel import *
 else: 
-    from src.generator import *
+    from leakgen.generator import *
 from model_training import *
 import time
-from src.utils import *
+from leakgen.utils import *
 import logging
 
 def main():

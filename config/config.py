@@ -3,7 +3,7 @@ CONFIG = {
 "NO_LEAK_PORTION" : 0.1,
 "EPOCH" : 50,
 "PARALLEL" : True,
-"GEOJSON" : "geojson.json",
+"GEOJSON" : "./input/geojson.json",
 "TRAIN" : {
     "demand_range" : [0, 2, 0.01],
     "noise_amplitude" : 0.05,

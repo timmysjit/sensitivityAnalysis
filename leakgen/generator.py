@@ -9,7 +9,7 @@ from pyproj import Transformer
 from shapely.geometry import Point, shape
 import logging
 import time
-from src.utils import *
+from leakgen.utils import *
 
 class LeakageGenerationError(Exception):
     pass
@@ -824,10 +824,8 @@ def generate_leakage_dataset_refactored(
             },
             "dataset": per_leak,
             "failures": per_leak_failure,
-        }, f"./data/leaks/{str(pipe_name)}|{float(leak_demand_lps):.6f}|{float(position):.6f}.json")
+        }, f"./data/leaks/{float(leak_demand_lps):.4f}.json")
         
-
-    
     if progress_callback is not None:
         progress_callback(96, run_idx, total_runs, "Generating no-leak samples...")
 

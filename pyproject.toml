@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "leakgen"
+version = "0.0.0"
+description = "Leak-detection dataset generation and sensor-sensitivity analysis."
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+include = ["leakgen*", "model_training*", "config*"]
+exclude = ["data*", "docs*", "input*", "tests*", ".venv*", ".archive*"]

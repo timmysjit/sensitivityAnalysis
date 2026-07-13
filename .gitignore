@@ -4,3 +4,7 @@ temp.*
 models
 data
 .archive
+__pycache__/
+*.egg-info/
+build/
+dist/
