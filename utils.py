@@ -15,33 +15,26 @@ def save_init():
     )
     return len(runs)
 
-def save(train_data , train, tl_data, tl_train, test_data, prediction, geojson, id : int):
-    file = open(f"./data/run{id}/config.json", "w")
-    json.dump(CONFIG, file, indent = 4)
-    file.close()
+def save_config(id: int):
+    try:
+        file = open(f"./data/run{id}/config.json", "w")
+        json.dump(CONFIG, file, indent = 4)
+        file.close()
+        logging.info("successfully saved config file")
+    except:
+        logging.error("error saving config file")
 
-    file = open(f"./data/run{id}/geojson.json", "w")
-    json.dump(geojson, file, indent = 4)
-    file.close()
 
-    if (CONFIG["TRAIN"]["save"]):
-        file = open(f"./data/run{id}/train_data.json", "w")
-        json.dump(train_data, file, indent = 4)
+def save(prediction, id : int):
+    try:
+        file = open(f"./data/run{id}/prediction.json", "w")
+        json.dump(prediction, file, indent = 4)
         file.close()
-        file = open(f"./data/run{id}/train.json", "w")
-        json.dump(train, file, indent = 4)
-        file.close()
-    if (CONFIG["TL"]["save"]):
-        file = open(f"./data/run{id}/tl_data.json", "w")
-        json.dump(tl_data, file, indent = 4)
-        file.close()
-        file = open(f"./data/run{id}/tl_train.json", "w")
-        json.dump(tl_train, file, indent = 4)
-        file.close()
-    if (CONFIG["TEST"]["save"]):
-        file = open(f"./data/run{id}/test_data.json", "w")
-        json.dump(test_data, file, indent = 4)
-        file.close()
-    file = open(f"./data/run{id}/prediction.json", "w")
-    json.dump(prediction, file, indent = 4)
-    file.close()
+        logging.info("successfully saved prediction output")
+    except:
+        logging.error("error saving prediction output")
+
+
+def save_dicts(data, output_path):
+    with open(output_path, 'w') as f:
+        f.write(json.dumps(data, separators=(',', ':')) + '\n')
