@@ -225,6 +225,7 @@ def predict_leakage(
     model_id: str,
     test_dataset: List[Dict[str, Any]],
     network_inp_content: str,
+    selected_node_ids: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Load a saved model and run inference on test data.
 
@@ -265,7 +266,7 @@ def predict_leakage(
 
     # Build graph data for each test sample
     try:
-        data_list = create_graph(test_dataset, wn, hex_to_class_index)
+        data_list = create_graph(test_dataset, wn, hex_to_class_index, selected_node_ids=selected_node_ids)
     except Exception as exc:
         raise ModelTrainingError(f"Failed to create graph dataset for prediction: {exc}")
 
@@ -317,6 +318,7 @@ def predict_leakage(
     return {
         "modelIdUsed": resolved_model_id,
         "fineTuned": finetuned_id is not None,
+        "selectedNodeIdsUsed": list(selected_node_ids) if selected_node_ids else None,
         "predictions": predictions,
         "accuracy": round(accuracy, 4),
         "total": total,
