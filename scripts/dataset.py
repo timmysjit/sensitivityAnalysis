@@ -6,18 +6,18 @@ else:
     from leakgen.generator import *
 from model_training import *
 import time
-from leakgen.utils import *
+from utils.utils import *
 import logging
 
 def main():
-    id = save_init()
+    save_dir = save_init()
     start_time = time.perf_counter()
     file = open(CONFIG["GEOJSON"], "r")
     data = json.load(file)
     file.close()
 
     logging.info("saving config file")
-    save_config(id)
+    save_config(save_dir)
 
     hexagon_geojson = json.loads(data["hexagonGeoJson"])
     network_inp_content = data["inpContent"]
@@ -42,8 +42,8 @@ def main():
     logging.info(f"time taken : {end_time - start_time}")
     
     if (CONFIG["TRAIN"]["save"]):
-        file = open(f"./data/run{id}/train_data.json", "w")
-        json.dump(train_data, file, indent = 4)
+        file = open(f"{save_dir}/train_data.json", "w")
+        json.dump(train_data, file)
         file.close()
         logging.info("train leakage dataset saved")
 

@@ -9,7 +9,7 @@ from pyproj import Transformer
 from shapely.geometry import Point, shape
 import logging
 import time
-from leakgen.utils import *
+from utils.utils import *
 
 class LeakageGenerationError(Exception):
     pass
